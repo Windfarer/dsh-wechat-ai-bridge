@@ -44,7 +44,7 @@ DeepSeek Harness（DSH）的微信桥接插件：通过 [wechat-ai](https://gith
 
 ## 设置页
 
-安装后打开 **设置 → 微信桥接**，可编辑基础、模型、自动回复、图片/文件、工具与 Codex 配置；连接路径和 token 文件只读展示，token 不会返回浏览器。保存会通过 `configEditor` 写回 profile patch 并重载插件。
+安装后打开 **设置 → 微信桥接**，可编辑 MCP 地址、token 文件、token 环境变量，以及基础、模型、自动回复、图片/文件、工具与 Codex 配置；工作区/状态/日志路径只读展示，token 本身不会返回浏览器。保存会通过 `configEditor` 写回 profile patch 并重载插件。
 
 ## 注意
 
