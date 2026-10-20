@@ -41,5 +41,13 @@
     "mcp",
     "bridge",
     "plugin"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Windfarer/dsh-wechat-ai-bridge.git"
+  },
+  "homepage": "https://github.com/Windfarer/dsh-wechat-ai-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/Windfarer/dsh-wechat-ai-bridge/issues"
+  }
 }

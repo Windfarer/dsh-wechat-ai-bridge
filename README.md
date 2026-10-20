@@ -21,6 +21,10 @@ DeepSeek Harness（DSH）的微信桥接插件：通过 [wechat-ai](https://gith
 
 ## 安装
 
+```bash
+git clone https://github.com/Windfarer/dsh-wechat-ai-bridge.git
+```
+
 使用 DSH plugin_manager 的 `install_bundle` 安装本目录。插件会插入 `preset-wechat`、`preset-wechat-work` 和 `wechat-ai-bridge` 行，不覆盖 DSH 的 `permission` 行，权限使用内置 `workspace-write`。
 
 安装后需要配置 MCP token：
