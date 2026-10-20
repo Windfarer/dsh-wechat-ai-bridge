@@ -1,5 +1,7 @@
 # dsh-wechat-ai-bridge
 
+[中文说明](README.zh.md)
+
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) bundle that bridges WeChat to persistent DSH agent sessions through the [wechat-ai](https://github.com/ChisBread/wechat-ai) MCP server.
 
 The plugin polls WeChat through wechat-ai's MCP tools, creates one DSH session per WeChat conversation, sends incoming text/images/files to the agent, and sends the agent's final reply back to WeChat. It also ships a Web settings page and optional agent tools for reading WeChat context.
