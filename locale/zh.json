@@ -1,0 +1,14 @@
+{
+  "meta": {
+    "title": "微信桥接",
+    "description": "将微信私聊消息和群聊 @ 提及转发到持久化的 DeepSeek Harness Agent 会话，并把 Agent 的回复通过 wechat-ai 发回微信。"
+  },
+  "tools": {
+    "wechat_send_message": "发送微信消息",
+    "wechat_list_chats": "列出微信会话",
+    "wechat_recent_messages": "读取微信最近消息",
+    "wechat_search_contacts": "搜索微信联系人",
+    "wechat_ai_bridge_status": "查看桥接状态",
+    "wechat_ai_bridge_control": "暂停或恢复自动回复"
+  }
+}

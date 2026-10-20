@@ -1,0 +1,14 @@
+{
+  "meta": {
+    "title": "WeChat Bridge",
+    "description": "Bridges private WeChat messages and group @ mentions to persistent DeepSeek Harness agent sessions, and sends the agent's reply back through wechat-ai."
+  },
+  "tools": {
+    "wechat_send_message": "Send a WeChat message",
+    "wechat_list_chats": "List WeChat chats",
+    "wechat_recent_messages": "Read recent WeChat messages",
+    "wechat_search_contacts": "Search WeChat contacts",
+    "wechat_ai_bridge_status": "Inspect bridge status",
+    "wechat_ai_bridge_control": "Pause or resume automatic replies"
+  }
+}
