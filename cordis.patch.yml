@@ -108,6 +108,8 @@
       config:
         mcpUrl: http://127.0.0.1:8100/mcp
         pollIntervalMs: 2500
+        # workspacePath is a root in per-chat mode, a single workspace in shared mode.
+        workspaceMode: per-chat
         workspaceTitle: 微信桥接
         agentPreset: wechat-work
         permissionPreset: workspace-write
