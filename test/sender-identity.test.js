@@ -30,7 +30,7 @@ test('group prompt labels global and group nicknames, keeping time, content and 
   const prompt = formatPrompt(group, [item({
     sender_nick_name: profile.nick_name, sender_remark: profile.remark,
   }, true)], '测试机器人群昵称', 4000);
-  assert.ok(prompt.includes('发送者微信昵称：测试全局昵称（test-sender）'));
+  assert.ok(prompt.includes('发送者微信昵称：测试全局昵称\n发送者ID：test-sender\n'));
   assert.ok(prompt.includes('发送者群昵称：测试群昵称'));
   assert.ok(prompt.includes('时间：00:00:01'));
   assert.ok(prompt.includes('本条消息 @ 了你。'));
@@ -49,7 +49,7 @@ test('private prompt labels global nickname and only a distinct, nonempty remark
     const prompt = formatPrompt(privateChat, [item({
       sender_nick_name: nickname, sender_remark: remark, sender_display: '测试好友备注',
     })], '', 4000);
-    assert.ok(prompt.includes(`发送者微信昵称：${nickname || '未知'}（test-sender）`));
+    assert.ok(prompt.includes(`发送者微信昵称：${nickname || '未知'}\n发送者ID：test-sender\n`));
     assert.equal(prompt.includes('发送者备注：'), Boolean(expectedRemark));
     if (expectedRemark) assert.ok(prompt.includes(`发送者备注：${expectedRemark}`));
     assert.ok(!prompt.includes('发送者群昵称：'));
@@ -59,10 +59,10 @@ test('private prompt labels global nickname and only a distinct, nonempty remark
 
 test('missing metadata stays unknown, without using display names as global nicknames', () => {
   const prompt = formatPrompt(group, [item({ sender_username: '', sender_display: '' })], '', 4000);
-  assert.ok(prompt.includes('发送者微信昵称：未知（未知）'));
+  assert.ok(prompt.includes('发送者微信昵称：未知\n发送者ID：未知\n'));
   assert.ok(prompt.includes('发送者群昵称：未知'));
   const displayed = formatPrompt(group, [item()], '', 4000);
-  assert.ok(displayed.includes('发送者微信昵称：未知（test-sender）'));
+  assert.ok(displayed.includes('发送者微信昵称：未知\n发送者ID：test-sender\n'));
   assert.ok(displayed.includes('发送者群昵称：测试群昵称'));
 });
 
@@ -217,7 +217,7 @@ test('runBatch resolves after agent readiness, continues on failure and keeps th
       return { sessionId: 'test-session', handle: { agent: {
         followup({ content }) {
           calls.push('prompt');
-          assert.ok(content[0].text.includes(`发送者微信昵称：${fail ? '未知' : profile.nick_name}（test-sender）`));
+          assert.ok(content[0].text.includes(`发送者微信昵称：${fail ? '未知' : profile.nick_name}\n发送者ID：test-sender\n`));
           assert.ok(content[0].text.includes('发送者群昵称：测试群昵称'));
         },
         async whenIdle() { bridge.lastAssistantText.set('test-session', '测试回复'); },
