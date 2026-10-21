@@ -45,8 +45,11 @@ function fixture(t, options = {}) {
       currentInitiator: () => undefined,
       async create({ sessionId, meta, setup }) {
         const tools = new Map();
-        await setup({ tools: { register: tool => tools.set(tool.name, tool), restrict() {}, guard() {} } });
-        const handle = { agent: { session: { id: sessionId, header: meta } }, tools,
+        let restriction;
+        let guard;
+        await setup({ tools: { register: tool => tools.set(tool.name, tool),
+          restrict(value) { restriction = value; }, guard(value) { guard = value; } } });
+        const handle = { agent: { id: sessionId, session: { id: sessionId, header: meta } }, tools, restriction, guard,
           async dispose() { live.delete(sessionId); } };
         live.set(sessionId, handle);
         return handle;
@@ -218,6 +221,127 @@ test('global image send rejects missing context, other chats, traversal and syml
   fs.symlinkSync(path.join(b.workspaceDir, 'image.png'), path.join(a.workspaceDir, 'alias.png'));
   await assert.rejects(send('alias.png'), /symlink/);
   assert.equal(sent.length, 1);
+});
+
+test('chat scope uses the live Agent id, with existing identity fallbacks and display name fallback', async t => {
+  const { bridge, ctx } = fixture(t);
+  const a = await bridge.ensureAgent(contactA);
+  const b = await bridge.ensureAgent(contactB);
+  for (const initiator of [a.handle.agent, { id: a.sessionId, sessionId: b.sessionId },
+    { sessionId: a.sessionId }, a.sessionId]) {
+    ctx.agents.currentInitiator = async () => initiator;
+    assert.deepEqual(await bridge.currentChatScope(), {
+      username: contactA.username, displayName: contactA.display_name,
+    });
+  }
+  bridge.state.chats[contactA.username].displayName = '';
+  assert.equal((await bridge.currentChatScope()).displayName, contactA.username);
+  delete bridge.state.chats[contactA.username];
+  assert.equal((await bridge.currentChatScope()).displayName, contactA.username);
+  for (const initiator of [undefined, { id: 'ordinary-session' }, { id: 'ordinary-session', sessionId: a.sessionId }]) {
+    ctx.agents.currentInitiator = () => initiator;
+    assert.equal(await bridge.currentChatScope(), undefined);
+  }
+  delete ctx.agents.currentInitiator;
+  assert.equal(await bridge.currentChatScope(), undefined);
+});
+
+test('scoped WeChat tools pin private and group targets and reject cross-chat access without leaking data', async t => {
+  for (const workspaceMode of ['per-chat', 'shared']) await t.test(workspaceMode, async t => {
+    const { bridge, ctx } = fixture(t, { workspaceMode, token: 'fixture-secret-token' });
+    const entries = [await bridge.ensureAgent(contactA), await bridge.ensureAgent(contactB)];
+    const tools = new Map();
+    const calls = [];
+    ctx.tools = { register: tool => tools.set(tool.name, tool) };
+    registerTools(ctx, bridge, {
+      async recentMessages(name, limit) {
+        calls.push(['read', name, limit]);
+        return { messages: [{ text: 'own chat fixture' }] };
+      },
+      async sendImage(args) { calls.push(['send', args.recipient_name]); return { status: 'sent' }; },
+      async recentChats() { assert.fail('scoped enumeration must not call the API'); },
+      async searchContacts() { assert.fail('scoped search must not call the API'); },
+    });
+    for (const [index, contact] of [contactA, contactB].entries()) {
+      const entry = entries[index];
+      ctx.agents.currentInitiator = () => entry.handle.agent;
+      fs.writeFileSync(path.join(entry.workspaceDir, 'image.png'), 'image fixture');
+      for (const name of [contact.username, contact.display_name]) {
+        const messages = await tools.get('wechat_recent_messages').execute({ contact_name: name, limit: 7 });
+        assert.equal(messages[0].text, 'own chat fixture');
+        assert.deepEqual(calls.at(-1), ['read', contact.username, 7]);
+        const image = await tools.get('wechat_send_image').execute({ recipient_name: name, file_path: 'image.png' });
+        assert.equal(image.recipient, contact.username);
+        assert.deepEqual(calls.at(-1), ['send', contact.username]);
+      }
+      const other = [contactA, contactB][1 - index];
+      const rejected = [
+        ['wechat_list_chats', {}, 'wechat_list_chats is unavailable to a chat-bound WeChat bridge Agent'],
+        ['wechat_search_contacts', { query: other.display_name }, 'wechat_search_contacts is unavailable to a chat-bound WeChat bridge Agent'],
+      ];
+      for (const name of [other.username, other.display_name, 'fixture-secret-token']) {
+        rejected.push(
+          ['wechat_recent_messages', { contact_name: name }, 'wechat_recent_messages: contact_name must match the current WeChat bridge chat'],
+          ['wechat_send_image', { recipient_name: name, file_path: 'missing.png' }, 'wechat_send_image: recipient_name must match the current WeChat bridge chat'],
+        );
+      }
+      const before = calls.length;
+      for (const [tool, args, message] of rejected) {
+        await assert.rejects(tools.get(tool).execute(args), error => {
+          assert.equal(error.message, message);
+          for (const secret of [bridge.config.token, other.username, other.display_name, 'own chat fixture']) {
+            assert.ok(!error.message.includes(secret));
+          }
+          return true;
+        });
+      }
+      assert.equal(calls.length, before);
+    }
+  });
+});
+
+test('unscoped DSH calls preserve chat lookup, enumeration, search and shared-workspace image sending', async t => {
+  const { bridge, ctx } = fixture(t, { workspaceMode: 'shared' });
+  await bridge.ensureAgent(contactA);
+  const workspace = await bridge.ensureWorkspace();
+  fs.writeFileSync(path.join(workspace.dir, 'image.png'), 'image fixture');
+  const tools = new Map();
+  const calls = [];
+  ctx.tools = { register: tool => tools.set(tool.name, tool) };
+  registerTools(ctx, bridge, {
+    async recentMessages(name, limit) { calls.push(['read', name, limit]); return { messages: [{ text: 'normal message' }] }; },
+    async recentChats(limit) { calls.push(['list', limit]); return { chats: [{ contact: contactB }] }; },
+    async searchContacts(query, limit) { calls.push(['search', query, limit]); return { contacts: [contactB] }; },
+    async sendImage(args) { calls.push(['send', args.recipient_name]); return { status: 'sent' }; },
+  });
+  for (const initiator of [undefined, { id: 'ordinary-dsh-agent' }]) {
+    ctx.agents.currentInitiator = () => initiator;
+    assert.equal((await tools.get('wechat_recent_messages').execute({ contact_name: contactB.display_name, limit: 5 }))[0].text, 'normal message');
+    assert.equal((await tools.get('wechat_list_chats').execute({ limit: 6 }))[0].username, contactB.username);
+    assert.equal((await tools.get('wechat_search_contacts').execute({ query: '测试', limit: 7 }))[0].username, contactB.username);
+    assert.equal((await tools.get('wechat_send_image').execute({ recipient_name: contactB.display_name, file_path: 'image.png' })).recipient, contactB.display_name);
+    assert.deepEqual(calls.splice(0), [
+      ['read', contactB.display_name, 5], ['list', 6], ['search', '测试', 7], ['send', contactB.display_name],
+    ]);
+  }
+});
+
+test('bridge presets hide enumeration, search and global bridge control while work mode keeps image sending', async t => {
+  const { bridge } = fixture(t, { agentPreset: 'wechat' });
+  const { handle } = await bridge.ensureAgent(contactA);
+  assert.deepEqual(handle.restriction, { allow: ['wechat_recent_messages'] });
+  assert.equal(handle.guard({ name: 'wechat_recent_messages' }), undefined);
+  const denied = ['wechat_list_chats', 'wechat_search_contacts', 'wechat_ai_bridge_status', 'wechat_ai_bridge_control', 'wechat_send_message'];
+  for (const name of denied) assert.equal(typeof handle.guard({ name }), 'string');
+  const patch = fs.readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8');
+  const block = patch.match(/        toolAllowlist:\n((?:          - [^\n]+\n)+)/)[1];
+  const toolAllowlist = [...block.matchAll(/- (\S+)/g)].map(match => match[1]);
+  const work = fixture(t, { toolAllowlist });
+  const workHandle = (await work.bridge.ensureAgent(contactA)).handle;
+  for (const name of denied) assert.equal(typeof workHandle.guard({ name }), 'string');
+  for (const name of ['wechat_recent_messages', 'wechat_send_image', 'workspace_read', 'workspace_run', 'web_search', 'todo_write']) {
+    assert.equal(workHandle.guard({ name }), undefined);
+  }
 });
 
 test('incoming files are copied into the selected workspace and reject symlink escapes', async t => {
