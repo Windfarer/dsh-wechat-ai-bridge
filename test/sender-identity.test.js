@@ -196,6 +196,73 @@ test('room metadata failures are non-fatal and allow contact lookup', async () =
   assert.equal(logs[0][0], 'room-members');
 });
 
+test('runBatch attaches recent images for visual group follow-ups and preserves image request rules', async t => {
+  const cases = [
+    { name: 'direct image followed by 你再看看', text: '你再看看', expected: 1 },
+    { name: 'look again resends previously delivered pixels', text: '你再看看', sent: true, expected: 1 },
+    { name: 'follow-up without recent image', text: '你再看看', remembered: false, expected: 0 },
+    { name: 'follow-up with expired image', text: '你再看看', expired: true, expected: 0 },
+    { name: 'unrelated text after image', text: '今天天气怎么样', expected: 0 },
+    { name: 'explicit image question', text: '图片里有什么', expected: 1 },
+    { name: 'explicit image question falls back to media', text: '图片里有什么', remembered: false, expected: 1 },
+    { name: 'generic image question keeps sent-image dedupe', text: '图片里有什么', sent: true, expected: 0, reads: 1 },
+    { name: 'explicit image reference resends pixels', text: '之前的图片', sent: true, expected: 1 },
+    { name: 'direct image resends pixels', text: '', type: 3, sent: true, expected: 1 },
+    { name: 'disabled images stay disabled', text: '你再看看', disabled: true, expected: 0 },
+    ...['看一下', '再看', '看下', '瞅瞅', '瞧瞧', '这个', '这张', '那个', '那张', '上面', '刚才']
+      .map(text => ({ name: `recent image reference: ${text}`, text, expected: 1 })),
+  ];
+  for (const scenario of cases) await t.test(scenario.name, async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const data = Buffer.from('test image pixels');
+    const image = item({
+      type: 3, local_id: 'test-image', create_time: now - 1, text: '',
+      image_block: { data: data.toString('base64'), mimeType: 'image/png' },
+    }).message;
+    const prompts = [];
+    const saved = [];
+    let reads = 0;
+    const { bridge, store, logs } = fixture({
+      async searchContacts() { return { contacts: [profile] }; },
+      async recentMedia(username) {
+        assert.equal(username, group.username);
+        reads++;
+        return { messages: [image] };
+      },
+      async sendText() { return { status: 'executed', completed: true }; },
+    });
+    bridge.identityResolved = true;
+    bridge.config.reply.images = !scenario.disabled;
+    if (scenario.expired) image.create_time = now - bridge.config.reply.imageContextAgeMs / 1000 - 1;
+    // Group images are remembered without triggering a reply; the later @ text runs the batch.
+    if (scenario.remembered !== false) bridge.rememberImage(group, image);
+    if (scenario.sent) bridge.rememberSentImages(group, [{ hash: bridge.imageHash(data) }]);
+    bridge.ctx.attachments = { async saveImages(images) {
+      saved.push(...images);
+      return images.map(() => 'test-image-attachment');
+    } };
+    bridge.ensureAgent = async () => ({ sessionId: 'test-session', acceptsImages: true, handle: { agent: {
+      followup({ content }) { prompts.push(content); },
+      async whenIdle() { bridge.lastAssistantText.set('test-session', '测试回复'); },
+    } } });
+    await bridge.runBatch(group, [item({
+      type: scenario.type || 1, create_time: now, text: `@测试机器人 ${scenario.text}`,
+    }, true)], bridge.pauseGeneration);
+    assert.equal(store.data.stats.errors, 0);
+    assert.equal(store.data.stats.replies, 1);
+    assert.deepEqual(logs, []);
+    assert.equal(prompts.length, 1);
+    assert.deepEqual(prompts[0].filter(block => block.type === 'image'),
+      Array.from({ length: scenario.expected }, () => ({ type: 'image', attachment: 'test-image-attachment' })));
+    assert.equal(reads, scenario.reads ?? scenario.expected);
+    assert.equal(saved.length, scenario.expected);
+    if (scenario.expected) {
+      assert.deepEqual(Buffer.from(saved[0].data), data);
+      assert.equal(saved[0].mediaType, 'image/png');
+    }
+  });
+});
+
 test('runBatch resolves after agent readiness, continues on failure and keeps the group @ name', async t => {
   for (const fail of [false, true]) await t.test(fail ? 'failed lookup' : 'successful lookup', async () => {
     const calls = [];
