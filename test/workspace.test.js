@@ -69,6 +69,224 @@ function fixture(t, options = {}) {
   return { bridge, ctx, config, temp, store, registered, created, snapshots };
 }
 
+function pollingFixture(t) {
+  const result = fixture(t, { selfUsername: 'test-self', mentionNames: ['配置机器人'] });
+  const { bridge, ctx, store } = result;
+  const logs = [];
+  const sent = [];
+  const prompts = [];
+  const calls = [];
+  const message = {
+    sender_username: 'test-sender', sender_display: '发送者群昵称', type: 1,
+    create_time: 100, time: '00:01:40', text: '@配置机器人 测试新群', local_id: 'test-local-id',
+  };
+  // The new group deliberately has no display name or contact metadata.
+  const chats = [
+    { contact: { username: contactB.username }, last_message: { ...message } },
+    { contact: contactA, last_message: { ...message, text: '测试私聊' } },
+  ];
+  bridge.logger = { ...logger, reset() {}, rate: (...args) => logs.push(args), clean: error => error.message };
+  bridge.api = {
+    client: { token: 'fixture-token', sessionOk: true },
+    async runtimeStatus() { return { database: { available: true }, services: { message: { is_running: true } } }; },
+    async searchContacts(username) {
+      return { contacts: [{ username, nick_name: username === 'test-self' ? '自身机器人' : '发送者微信昵称' }] };
+    },
+    async roomMembers() { throw new Error('wechat-ai query_room_member_list: missing members'); },
+    async recentChats() { return { chats }; },
+    async recentMessages(username, limit) {
+      calls.push([username, limit]);
+      if (username === contactB.username) throw new Error('wechat-ai get_recent_messages: missing messages');
+      return { messages: [{ ...chats.find(chat => chat.contact.username === username).last_message }] };
+    },
+    async sendText(args) { sent.push(args); return { status: 'executed', completed: true }; },
+  };
+  // Keep the real workspace/session creation and reply pipeline, faking only DSH and MCP.
+  const create = ctx.agents.create.bind(ctx.agents);
+  ctx.agents.create = async options => {
+    const handle = await create(options);
+    handle.agent.followup = ({ content }) => prompts.push(content[0].text);
+    handle.agent.whenIdle = async () => bridge.lastAssistantText.set(options.sessionId, '测试回复');
+    return handle;
+  };
+  store.data.initialized = true;
+  store.data.runtime.lastPollError = 'previous poll failure';
+  // Drain debounce batches explicitly so tests do not depend on timer scheduling.
+  t.after(() => { for (const chat of bridge.chats.values()) clearTimeout(chat.timer); });
+  const drain = async () => {
+    for (const [username, chat] of bridge.chats) {
+      clearTimeout(chat.timer);
+      chat.timer = null;
+      await bridge.runBatch(chats.find(item => item.contact.username === username).contact,
+        chat.pending.splice(0), bridge.pauseGeneration);
+    }
+  };
+  return { ...result, chats, message, logs, sent, prompts, calls, drain };
+}
+
+test('new groups fall back on missing messages, reply in normal workspaces and do not replay', async t => {
+  for (const [error, mention] of [
+    ['wechat-ai get_recent_messages: missing messages', '配置机器人'],
+    ['MCP get_recent_messages: not_found', '自身机器人'],
+    ['MCP get_recent_messages: 未找到联系人', '配置机器人'],
+  ]) await t.test(error, async t => {
+    const { bridge, store, chats, logs, sent, prompts, calls, created, drain } = pollingFixture(t);
+    chats[0].last_message.text = `@${mention} 测试新群`;
+    const recentMessages = bridge.api.recentMessages;
+    bridge.api.recentMessages = async (username, limit) => {
+      if (username === contactB.username) { calls.push([username, limit]); throw new Error(error); }
+      return recentMessages(username, limit);
+    };
+    assert.equal(Object.hasOwn(store.data.chats, contactB.username), false);
+    await bridge.tick();
+    assert.equal(store.data.runtime.ready, true);
+    assert.equal(store.data.runtime.lastPollError, '');
+    assert.equal(store.data.stats.triggers, 2);
+    assert.equal(store.data.chats[contactB.username].lastTime, 100);
+    const queued = bridge.chats.get(contactB.username).pending;
+    assert.deepEqual(queued, [{ message: chats[0].last_message, mentioned: true }]);
+    assert.notEqual(queued[0].message, chats[0].last_message);
+    assert.deepEqual(calls, [[contactB.username, 50], [contactA.username, 50]]);
+    assert.ok(logs.some(([key]) => key === 'room-members'));
+    assert.equal(logs.filter(([key]) => key === 'chat-message-fallback').length, 1);
+    for (const secret of [chats[0].last_message.text, contactB.username, '发送者群昵称']) {
+      assert.ok(!JSON.stringify(logs).includes(secret));
+    }
+    await drain();
+    assert.equal(sent.length, 2);
+    assert.equal(sent[0].recipient_name, contactB.username);
+    assert.equal(sent[0].at_user_name, '发送者群昵称');
+    assert.ok(prompts[0].includes('发送者微信昵称：发送者微信昵称'));
+    assert.ok(prompts[0].includes('发送者群昵称：发送者群昵称'));
+    assert.ok(prompts[0].includes('时间：00:01:40'));
+    assert.equal(created.length, 2);
+    for (const contact of [contactA, contactB]) {
+      const entry = bridge.agents.get(contact.username);
+      assert.equal(entry.workspaceDir, bridge.workspacePathForChat(contact.username));
+      assert.ok(fs.statSync(entry.workspaceDir).isDirectory());
+      assert.equal(entry.handle.agent.session.header.cwd, entry.workspaceDir);
+      assert.equal(store.data.chats[contact.username].sessionId, entry.sessionId);
+      assert.deepEqual(created.find(workspace => workspace.dir === entry.workspaceDir).sessions, [entry.sessionId]);
+    }
+    await bridge.tick();
+    assert.equal(calls.length, 2);
+    assert.equal(store.data.stats.triggers, 2);
+    assert.equal(bridge.chats.get(contactB.username).pending.length, 0);
+    chats[0].last_message = { ...chats[0].last_message, create_time: 101, local_id: 'newer' };
+    await bridge.tick();
+    assert.equal(store.data.chats[contactB.username].lastTime, 101);
+    assert.equal(store.data.stats.triggers, 3);
+    assert.equal(bridge.chats.get(contactB.username).pending[0].message.local_id, 'newer');
+    assert.equal(store.data.stats.errors, 0);
+  });
+});
+
+test('non-missing message errors skip only that chat without fallback or health failure', async t => {
+  for (const error of ['fetch failed', 'request timed out', 'MCP HTTP 401', 'MCP HTTP 404',
+    'MCP token missing', 'wechat-ai get_recent_messages: invalid or failed result']) {
+    await t.test(error, async t => {
+      const { bridge, store, logs, calls } = pollingFixture(t);
+      const recentMessages = bridge.api.recentMessages;
+      bridge.api.recentMessages = async (username, limit) => {
+        if (username === contactB.username) throw new Error(error);
+        return recentMessages(username, limit);
+      };
+      store.data.runtime.ready = true;
+      await bridge.tick();
+      assert.equal(store.data.runtime.ready, true);
+      assert.equal(store.data.runtime.lastPollError, '');
+      assert.equal(store.data.chats[contactB.username].lastTime, 0);
+      assert.equal(bridge.chats.has(contactB.username), false);
+      assert.equal(bridge.chats.get(contactA.username).pending.length, 1);
+      assert.deepEqual(calls, [[contactA.username, 50]]);
+      assert.ok(logs.some(([key, value]) => key === 'chat-poll' && value.message === error));
+      assert.ok(!logs.some(([key]) => key === 'chat-message-fallback' || key === 'poll'));
+    });
+  }
+});
+
+test('missing-message fallback requires a positive finite timestamp and nonempty text', async t => {
+  for (const invalid of [undefined, {}, { create_time: 0, text: 'text' },
+    { create_time: 'bad', text: 'text' }, { create_time: Infinity, text: 'text' },
+    { create_time: 100 }, { create_time: 100, text: 42 }, { create_time: 100, text: '  ' }]) {
+    await t.test(JSON.stringify(invalid) || 'absent', async t => {
+      const { bridge, chats, logs } = pollingFixture(t);
+      chats[0].last_message = invalid;
+      await bridge.tick();
+      assert.equal(bridge.chats.has(contactB.username), false);
+      assert.equal(bridge.chats.get(contactA.username).pending.length, 1);
+      assert.equal(bridge.state.runtime.ready, true);
+      assert.equal(bridge.state.runtime.lastPollError, '');
+      assert.ok(!logs.some(([key]) => key === 'chat-message-fallback'));
+    });
+  }
+});
+
+test('other per-chat errors are isolated and successful new chats use the full message batch', async t => {
+  for (const stage of ['chatState', 'allowedChat', 'enqueue']) await t.test(stage, async t => {
+    const { bridge, chats, logs } = pollingFixture(t);
+    bridge.api.recentMessages = async username => {
+      const last = chats.find(chat => chat.contact.username === username).last_message;
+      return { messages: [{ ...last, create_time: 99 }, { ...last }] };
+    };
+    const original = bridge[stage].bind(bridge);
+    bridge[stage] = (contact, ...args) => {
+      if (contact.username === contactB.username) throw new Error(`test ${stage} failure`);
+      return original(contact, ...args);
+    };
+    await bridge.tick();
+    assert.equal(bridge.chats.get(contactA.username).pending.length, 2);
+    assert.equal(bridge.state.runtime.ready, true);
+    assert.equal(bridge.state.runtime.lastPollError, '');
+    assert.ok(logs.some(([key]) => key === 'chat-poll'));
+    assert.ok(!logs.some(([key]) => key === 'chat-message-fallback'));
+  });
+});
+
+test('a new group with working recentMessages processes its full batch without fallback', async t => {
+  const { bridge, chats, logs } = pollingFixture(t);
+  const messages = [
+    { ...chats[0].last_message, create_time: 99, local_id: 'earlier' },
+    { ...chats[0].last_message, text: '@配置机器人 来自消息数据库' },
+  ];
+  bridge.api.recentMessages = async () => ({ messages });
+  await bridge.tick();
+  assert.deepEqual(bridge.chats.get(contactB.username).pending,
+    messages.map(message => ({ message, mentioned: true })));
+  assert.equal(bridge.state.runtime.ready, true);
+  assert.ok(!logs.some(([key]) => key === 'chat-message-fallback'));
+});
+
+test('fallback preserves startup history, pause, deny and self-message rules', async t => {
+  for (const mode of ['startup', 'history', 'paused', 'denied', 'self']) await t.test(mode, async t => {
+    const { bridge, chats, calls } = pollingFixture(t);
+    if (mode === 'startup' || mode === 'history') bridge.state.initialized = false;
+    if (mode === 'history') bridge.config.reply.history = true;
+    if (mode === 'paused') bridge.state.paused = true;
+    if (mode === 'denied') bridge.config.reply.denyContacts = [contactB.username];
+    if (mode === 'self') chats[0].last_message.sender_username = bridge.config.selfUsername;
+    await bridge.tick();
+    assert.equal(bridge.state.runtime.ready, true);
+    assert.equal(bridge.state.chats[contactB.username].lastTime, 100);
+    assert.equal(bridge.chats.has(contactB.username), mode === 'history');
+    if (mode === 'startup') assert.equal(calls.length, 0);
+  });
+});
+
+test('poll-level failures still make the bridge unhealthy', async t => {
+  for (const stage of ['runtimeStatus', 'recentChats', 'health']) await t.test(stage, async t => {
+    const { bridge, logs } = pollingFixture(t);
+    if (stage === 'health') bridge.api.runtimeStatus = async () => ({ database: { available: false } });
+    else bridge.api[stage] = async () => { throw new Error(`test ${stage} failure`); };
+    bridge.state.runtime.ready = true;
+    await bridge.tick();
+    assert.equal(bridge.state.runtime.ready, false);
+    assert.ok(bridge.state.runtime.lastPollError);
+    assert.equal(bridge.chats.size, 0);
+    assert.ok(logs.some(([key]) => key === (stage === 'health' ? 'health' : 'poll')));
+  });
+});
+
 test('directory segments are safe, bounded, stable and distinguish sanitized collisions', () => {
   for (const username of ['../', '.', '..', '...', '/absolute/path', 'a\\b', 'a/../b', '中文', 'a'.repeat(200), 'a@chatroom']) {
     const segment = chatWorkspaceSegment(username);
