@@ -32,7 +32,7 @@
       ]
     }
   },
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "keywords": [
     "dsh",
     "deepseek-harness",

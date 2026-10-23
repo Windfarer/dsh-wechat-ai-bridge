@@ -153,4 +153,6 @@ node --test
 
 ## License
 
-MIT
+GPL-3.0-only
+
+Copyright (C) 2026 dsh-wechat-ai-bridge contributors
