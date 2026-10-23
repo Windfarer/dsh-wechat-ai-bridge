@@ -17,14 +17,16 @@ test('TTS config normalizes defaults and numeric bounds', () => {
   assert.equal(defaults.enabled, false);
   assert.equal(defaults.model, 'breeze-tts-2');
   assert.equal(defaults.voice, 'alloy');
+  assert.equal(defaults.instructions, '');
   assert.equal(defaults.maxChars, 200);
   const custom = normalizeConfig({
-    tts: { enabled: true, baseUrl: ' http://10.0.0.14:8000/v1 ', apiKey: 'unused', timeoutMs: 999999, maxChars: 0 },
+    tts: { enabled: true, baseUrl: ' http://10.0.0.14:8000/v1 ', apiKey: 'unused', instructions: '  warm, calm  ', timeoutMs: 999999, maxChars: 0 },
   }).tts;
   assert.equal(custom.baseUrl, 'http://10.0.0.14:8000/v1');
   assert.equal(custom.timeoutMs, 180000);
   assert.equal(custom.maxChars, 200);
   assert.equal(custom.apiKey, 'unused');
+  assert.equal(custom.instructions, 'warm, calm');
 });
 
 test('TTS endpoint joins the OpenAI-compatible speech path', () => {
@@ -64,6 +66,26 @@ test('TTS synthesizes audio with model, voice and optional bearer key', async t 
     contentType: 'application/json',
     body: { model: 'breeze-tts-2', input: '你好，我是 Nemu。', voice: 'alloy' },
   });
+});
+
+test('TTS sends optional instructions only when configured', async t => {
+  const bodies = [];
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      bodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      res.writeHead(200, { 'content-type': 'audio/mpeg' });
+      res.end(Buffer.from('ID3fixture-audio'));
+    });
+  });
+  const base = await listen(server);
+  t.after(() => server.close());
+  const config = normalizeConfig({
+    tts: { enabled: true, baseUrl: `${base}/v1`, instructions: '  warmer and slower  ' },
+  }).tts;
+  await synthesizeSpeech(config, '你好。');
+  assert.deepEqual(bodies[0], { model: 'breeze-tts-2', input: '你好。', voice: 'alloy', instructions: 'warmer and slower' });
 });
 
 test('TTS rejects disabled, empty and overlong text before making a request', async () => {

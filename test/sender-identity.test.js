@@ -66,6 +66,15 @@ test('missing metadata stays unknown, without using display names as global nick
   assert.ok(displayed.includes('发送者群昵称：测试群昵称'));
 });
 
+test('persona is prepended only when configured', () => {
+  const batch = [item()];
+  assert.ok(!formatPrompt(group, batch, '', 4000).includes('［角色设定］'));
+  const prompt = formatPrompt(group, batch, '', 4000, '你叫小七，语气活泼。');
+  assert.ok(prompt.startsWith('［角色设定］\n请始终遵循以下人设：\n你叫小七，语气活泼。\n\n［微信新消息］'));
+  assert.ok(prompt.includes('内容：\n测试消息'));
+  assert.ok(formatPrompt(group, batch, '', 4000, '   ').startsWith('［微信新消息］'));
+});
+
 test('prompt remains chronological and reserves reply instructions when truncated', () => {
   const batch = [item({ create_time: 2, text: '较晚消息' }), item({ text: '较早消息' })];
   const prompt = formatPrompt(group, batch, '', 4000);

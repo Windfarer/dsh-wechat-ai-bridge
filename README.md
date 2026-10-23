@@ -51,6 +51,7 @@ git clone https://github.com/Windfarer/dsh-wechat-ai-bridge.git
     tokenFile: /path/to/wechat-ai/.env
     workspaceMode: per-chat
     workspaceTitle: 微信桥接
+    persona: 你叫小七，语气活泼但不过度卖萌。
     agentPreset: wechat-work
     permissionPreset: workspace-write
 ```
@@ -62,11 +63,13 @@ git clone https://github.com/Windfarer/dsh-wechat-ai-bridge.git
 | `workspaceMode` | `per-chat` | `per-chat` 为每个私聊联系人、每个群建立独立工作区；`shared` 保留单一工作区行为。 |
 | `workspacePath` | `~/.dsh/wechat-ai-bridge-workspace` | 逐聊天模式的根目录，或共享模式的工作区本身；在部署配置中修改。 |
 | `workspaceTitle` | `微信桥接` | 标题前缀；逐聊天模式附加“微信 / 微信群”和显示名，共享模式直接使用此标题。 |
+| `persona` | 空 | 可选人设（最多 1200 字），附加到每轮微信消息提示开头，用于设定身份、语气和称呼；留空使用预设默认人设。设置页在“人设”分组编辑。 |
 | `tts.enabled` | `false` | 是否启用 TTS 语音合成工具；本地部署可设为 `true`。 |
 | `tts.baseUrl` | 空 | OpenAI 兼容 TTS 服务地址，**包含** `/v1`，例如 `http://10.0.0.14:8000/v1`；请求发往 `Base URL + /audio/speech`。 |
 | `tts.apiKey` | 空 | 以 `Authorization: Bearer <key>` 发送；不会返回浏览器，留空表示保持已保存值。无鉴权服务可填 `unused`。 |
 | `tts.model` | `breeze-tts-2` | 请求中的 `model`。 |
 | `tts.voice` | `alloy` | 请求中的 `voice`。 |
+| `tts.instructions` | 空 | 可选的 `instructions` 字段，发给支持该参数的 TTS 服务，用于控制音色、情绪或说话风格；留空不发送该字段。 |
 | `tts.timeoutMs` | `60000` | 单次合成超时（毫秒）。 |
 | `tts.maxChars` | `200` | 单次合成最大字符数，避免超过微信 55 秒语音上限。 |
 
@@ -94,10 +97,10 @@ POST <tts.baseUrl>/audio/speech
 Authorization: Bearer <tts.apiKey>
 Content-Type: application/json
 
-{"model":"<tts.model>","input":"要朗读的文本","voice":"<tts.voice>"}
+{"model":"<tts.model>","input":"要朗读的文本","voice":"<tts.voice>","instructions":"<tts.instructions，可选>"}
 ```
 
-`tts.baseUrl` 应包含 `/v1`；不要把 `/audio/speech` 重复写进 Base URL。返回的 `audio/*` 字节直接交给微信。设置页的 API Key 输入框不会回显已保存的 Key，留空即保持不变。
+`tts.baseUrl` 应包含 `/v1`；不要把 `/audio/speech` 重复写进 Base URL。`tts.instructions` 是可选的音色/风格提示，仅当服务支持时发送；留空则请求体不包含该字段。返回的 `audio/*` 字节直接交给微信。设置页的 API Key 输入框不会回显已保存的 Key，留空即保持不变。
 
 是否使用语音由 Agent 按系统提示判断：只有发送人明确要求“发语音/用语音回复”，或这条回复确实更适合语音时才调用；其他情况继续走普通文字回复。发送人明确要求语音时，桥接从本轮开始就不安排“稍等”提示；如果 Agent 自己判断适合用语音，则先调用 `wechat_voice_intent()`（不产生任何微信消息），立即取消本轮尚未发出的提示，然后合成/发送音频。语音动作被接受后（包括已排队或等待超时、仍由 RPA 继续播放的情况）桥接会跳过本轮的文字自动回复，避免语音和文字重复；明确失败或被拒绝时仍回退到正常文字路径。
 
@@ -110,13 +113,14 @@ tts:
   apiKey: unused
   model: breeze-tts-2
   voice: alloy
+  # instructions: 温暖、平静、语速稍慢
   timeoutMs: 60000
   maxChars: 200
 ```
 
 ## 设置页
 
-安装后打开 **设置 → 微信桥接**，在基础设置中选择工作区模式。也可编辑 MCP 地址、token 文件、token 环境变量，以及模型、TTS、自动回复、图片/文件、工具与 Codex 配置；工作区根目录/状态/日志路径只读展示，token 和 TTS API Key 本身不会返回浏览器。保存会通过 `configEditor` 写回 profile patch 并重载插件。
+从 0.5.0 起，设置页新增“人设”分组，TTS 分组新增可选的 `instructions` 字段。安装后打开 **设置 → 微信桥接**，在基础设置中选择工作区模式，在“人设”中填写可选的角色设定。也可编辑 MCP 地址、token 文件、token 环境变量，以及模型、TTS、自动回复、图片/文件、工具与 Codex 配置；工作区根目录/状态/日志路径只读展示，token 和 TTS API Key 本身不会返回浏览器。保存会通过 `configEditor` 写回 profile patch 并重载插件。
 
 ## 安全与注意事项
 

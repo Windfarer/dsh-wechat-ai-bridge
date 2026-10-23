@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({
       advanced: '高级选项',
       readOnly: '只读',
       groupBasic: '基础',
+      groupPersona: '人设',
       groupModel: '模型',
       groupTts: '文字转语音（TTS）',
       groupReply: '自动回复',
@@ -32,6 +33,8 @@ window.__ModuleLoader__.load({
       workspaceModeHint: '逐聊天模式按联系人和群隔离目录；共享模式使用同一目录。切换后不匹配的会话会重新创建，旧数据保留。',
       workspacePerChat: '逐聊天隔离（默认）',
       workspaceShared: '共享工作区',
+      persona: '人设设定',
+      personaHint: '可选。会附加到每轮微信消息提示开头，用于设定身份、语气和称呼（最多 1200 字）；留空则使用默认助手人设。',
       agentPreset: 'Agent 预设',
       agentPresetHint: '例如 wechat-work；修改后新建会话生效。',
       permissionPreset: '权限预设',
@@ -52,6 +55,8 @@ window.__ModuleLoader__.load({
       ttsModelHint: '例如 breeze-tts-2。',
       ttsVoice: 'TTS 音色',
       ttsVoiceHint: '例如 alloy（本地默认女声）。',
+      ttsInstructions: 'TTS 音色指令（可选）',
+      ttsInstructionsHint: '可选。作为 instructions 字段发给支持该参数的 TTS 服务，用于控制音色、情绪或说话风格；留空则不发送。',
       ttsTimeout: 'TTS 超时（毫秒）',
       ttsMaxChars: '单次合成最大字数',
       ttsMaxCharsHint: '限制文本长度，避免生成超过微信 55 秒上限的语音。',
@@ -119,6 +124,7 @@ window.__ModuleLoader__.load({
       advanced: 'Advanced',
       readOnly: 'Read only',
       groupBasic: 'Basics',
+      groupPersona: 'Persona',
       groupModel: 'Model',
       groupTts: 'Text to speech (TTS)',
       groupReply: 'Replies',
@@ -130,6 +136,8 @@ window.__ModuleLoader__.load({
       workspaceModeHint: 'Per-chat mode isolates contacts and groups; shared mode uses one directory. Switching starts fresh sessions where paths differ and preserves old data.',
       workspacePerChat: 'Per chat (default)',
       workspaceShared: 'Shared workspace',
+      persona: 'Persona',
+      personaHint: 'Optional. Prepended to every WeChat prompt to set identity, tone and address (max 1200 characters); leave empty for the default assistant persona.',
       agentPreset: 'Agent preset',
       agentPresetHint: 'For example wechat-work; applies to new sessions.',
       permissionPreset: 'Permission preset',
@@ -150,6 +158,8 @@ window.__ModuleLoader__.load({
       ttsModelHint: 'For example breeze-tts-2.',
       ttsVoice: 'TTS voice',
       ttsVoiceHint: 'For example alloy, the local default female voice.',
+      ttsInstructions: 'TTS instructions (optional)',
+      ttsInstructionsHint: 'Optional instructions field for TTS services that support it, to control timbre, emotion or delivery; omitted when empty.',
       ttsTimeout: 'TTS timeout (ms)',
       ttsMaxChars: 'Maximum synthesized characters',
       ttsMaxCharsHint: 'Caps text length so generated audio stays below the WeChat 55-second limit.',
@@ -218,6 +228,13 @@ window.__ModuleLoader__.load({
         ],
       },
       {
+        id: 'persona',
+        title: 'groupPersona',
+        fields: [
+          { path: 'persona', kind: 'textarea', label: 'persona', hint: 'personaHint' },
+        ],
+      },
+      {
         id: 'model',
         title: 'groupModel',
         fields: [
@@ -235,6 +252,7 @@ window.__ModuleLoader__.load({
           { path: 'tts.apiKey', kind: 'text', label: 'ttsApiKey', hint: 'ttsApiKeyHint' },
           { path: 'tts.model', kind: 'text', label: 'ttsModel', hint: 'ttsModelHint' },
           { path: 'tts.voice', kind: 'text', label: 'ttsVoice', hint: 'ttsVoiceHint' },
+          { path: 'tts.instructions', kind: 'textarea', label: 'ttsInstructions', hint: 'ttsInstructionsHint' },
           { path: 'tts.timeoutMs', kind: 'number', label: 'ttsTimeout' },
           { path: 'tts.maxChars', kind: 'number', label: 'ttsMaxChars', hint: 'ttsMaxCharsHint' },
         ],
@@ -388,6 +406,12 @@ window.__ModuleLoader__.load({
             if (field.kind === 'number' && next !== '' && !Number.isFinite(next)) return;
             onEdit(field.path, next);
           },
+        }),
+        field.kind === 'textarea' && h('textarea', {
+          key: 'control', className: 'wb-textarea',
+          value: value === undefined || value === null ? '' : String(value),
+          disabled,
+          onChange: event => onEdit(field.path, event.target.value),
         }),
         field.kind === 'array' && h('textarea', {
           key: 'control', className: 'wb-textarea',

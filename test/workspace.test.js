@@ -804,6 +804,8 @@ test('settings expose the mode without credentials and reject invalid enum value
   };
   const read = await request('GET');
   assert.equal(read.result.values.workspaceMode, 'per-chat');
+  assert.equal(read.result.values.persona, '');
+  assert.equal(read.result.values.tts.instructions, '');
   assert.equal(Object.hasOwn(read.result.values, 'token'), false);
   assert.equal(read.result.values.tts.apiKey, '');
   assert.equal(read.result.values.tts.enabled, false);
@@ -813,8 +815,10 @@ test('settings expose the mode without credentials and reject invalid enum value
   assert.equal(edited.workspaceMode, 'shared');
   assert.equal((await request('POST', { workspaceMode: 'invalid' })).code, 400);
   assert.equal(edited.workspaceMode, 'shared');
-  const tts = { enabled: true, baseUrl: 'http://127.0.0.1:8000/v1', apiKey: '', model: 'breeze-tts-2', voice: 'alloy', timeoutMs: 60000, maxChars: 200 };
-  assert.equal((await request('POST', { tts })).code, 200);
+  const tts = { enabled: true, baseUrl: 'http://127.0.0.1:8000/v1', apiKey: '', model: 'breeze-tts-2', voice: 'alloy', instructions: 'calm narration', timeoutMs: 60000, maxChars: 200 };
+  assert.equal((await request('POST', { persona: '你叫小七。', tts })).code, 200);
+  assert.equal(edited.persona, '你叫小七。');
+  assert.equal(edited.tts.instructions, 'calm narration');
   assert.equal(edited.tts.baseUrl, tts.baseUrl);
   assert.equal(edited.tts.enabled, true);
   assert.equal(Object.hasOwn(edited.tts, 'apiKey'), false);
