@@ -176,7 +176,7 @@ test('one room refresh caches all members and retains group-scoped self identity
   assert.equal(searchCalls, 0);
   assert.equal(bridge.senderProfiles.size, 3);
   assert.equal(bridge.chatState(group).roomSelfName, '测试机器人群昵称');
-  assert.deepEqual(bridge.chatState(group).roomMemberNames, [
+  assert.deepEqual(bridge.roomMemberNames.get(group.username), [
     { username: profile.username, display_name: '测试群昵称' },
     { username: 'test-member', display_name: '另一个测试群昵称' },
     { username: 'test-self', display_name: '测试机器人群昵称' },
@@ -200,15 +200,15 @@ test('sender profile cache evicts the oldest fetched entry and stays bounded', (
 
 test('auto-@ skips a display name that prefixes another member', () => {
   const { bridge } = fixture();
-  bridge.chatState(group).roomMemberNames = [
+  bridge.roomMemberNames.set(group.username, [
     { username: 'test-y', display_name: 'y' },
     { username: 'test-yang', display_name: 'Yang' },
     { username: 'test-bread', display_name: 'Bread' },
-  ];
+  ]);
   assert.equal(bridge.mentionNameFor(group, 'y', 'test-y'), undefined);
   assert.equal(bridge.mentionNameFor(group, 'Yang', 'test-yang'), 'Yang');
   assert.equal(bridge.mentionNameFor(group, 'Bread', 'test-bread'), 'Bread');
-  bridge.chatState(group).roomMemberNames = [];
+  bridge.roomMemberNames.delete(group.username);
   assert.equal(bridge.mentionNameFor(group, 'y', 'test-y'), 'y');
 });
 
