@@ -441,6 +441,102 @@ test('global image send rejects missing context, other chats, traversal and syml
   assert.equal(sent.length, 1);
 });
 
+test('global voice send is chat-scoped, workspace-bound and marks a completed voice turn', async t => {
+  const { bridge, ctx } = fixture(t);
+  const a = await bridge.ensureAgent(contactA);
+  const b = await bridge.ensureAgent(contactB);
+  fs.writeFileSync(path.join(a.workspaceDir, 'voice.mp3'), 'own voice fixture');
+  fs.writeFileSync(path.join(b.workspaceDir, 'voice.mp3'), 'other voice fixture');
+  fs.writeFileSync(path.join(a.workspaceDir, 'voice.txt'), 'not audio');
+  const tools = new Map();
+  const sent = [];
+  ctx.tools = { register: tool => tools.set(tool.name, tool) };
+  registerTools(ctx, bridge, {
+    async sendVoice(args) {
+      sent.push(args);
+      return { status: 'executed', completed: true, audio: { duration_seconds: 2 } };
+    },
+  });
+  const send = file_path => tools.get('wechat_send_voice').execute({
+    recipient_name: contactA.display_name, file_path,
+  });
+  await assert.rejects(send('voice.mp3'), /active WeChat bridge chat/);
+  ctx.agents.currentInitiator = () => ({ id: a.sessionId });
+  assert.equal(await bridge.voiceWorkspaceRoot(), a.workspaceDir);
+  await assert.rejects(send('voice.txt'), /unsupported voice file type/);
+  await assert.rejects(send(path.join(b.workspaceDir, 'voice.mp3')), /escapes/);
+  await assert.rejects(send(`../${path.basename(b.workspaceDir)}/voice.mp3`), /escapes/);
+  fs.symlinkSync(path.join(b.workspaceDir, 'voice.mp3'), path.join(a.workspaceDir, 'alias.mp3'));
+  await assert.rejects(send('alias.mp3'), /symlink/);
+  assert.equal(sent.length, 0);
+  const result = await send('voice.mp3');
+  assert.equal(result.recipient, contactA.username);
+  assert.equal(Buffer.from(sent[0].audio_base64, 'base64').toString(), 'own voice fixture');
+  assert.equal(sent[0].wait_seconds, 60);
+  assert.equal(result.completed, true);
+  assert.equal(bridge.voiceSentSessions.has(a.sessionId), true);
+  assert.equal(bridge.voiceSentSessions.has(b.sessionId), false);
+});
+
+test('a queued local voice action also suppresses the automatic text reply', async t => {
+  const { bridge, ctx } = fixture(t);
+  const a = await bridge.ensureAgent(contactA);
+  fs.writeFileSync(path.join(a.workspaceDir, 'queued.mp3'), 'queued voice fixture');
+  const tools = new Map();
+  const sent = [];
+  ctx.tools = { register: tool => tools.set(tool.name, tool) };
+  registerTools(ctx, bridge, {
+    async sendVoice(args) {
+      sent.push(args);
+      return { status: 'timeout', queued: true, completed: false };
+    },
+  });
+  ctx.agents.currentInitiator = () => ({ id: a.sessionId });
+  await tools.get('wechat_send_voice').execute({
+    recipient_name: contactA.display_name,
+    file_path: 'queued.mp3',
+  });
+  assert.equal(sent.length, 1);
+  assert.equal(bridge.voiceSentSessions.has(a.sessionId), true);
+});
+
+test('a voice send cancels the pending working notice', async t => {
+  const { bridge } = fixture(t);
+  const a = await bridge.ensureAgent(contactA);
+  let fired = false;
+  const timer = setTimeout(() => { fired = true; }, 20);
+  bridge.workingNoticeTimers.set(a.sessionId, timer);
+  bridge.noteVoiceSent({ username: contactA.username });
+  assert.equal(bridge.workingNoticeTimers.has(a.sessionId), false);
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(fired, false);
+});
+
+test('a completed voice bubble suppresses the automatic text reply for that turn', async t => {
+  const { bridge, ctx, chats, sent, drain } = pollingFixture(t);
+  const create = ctx.agents.create;
+  ctx.agents.create = async options => {
+    const handle = await create(options);
+    const whenIdle = handle.agent.whenIdle;
+    handle.agent.whenIdle = async () => {
+      if (bridge.agents.get(contactA.username)?.sessionId === options.sessionId) {
+        bridge.noteVoiceSent({ username: contactA.username });
+        bridge.lastAssistantText.set(options.sessionId, '这段文字不应该再发一次');
+      } else {
+        await whenIdle();
+      }
+    };
+    return handle;
+  };
+  await bridge.tick();
+  await drain();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].recipient_name, contactB.username);
+  assert.equal(bridge.state.stats.replies, 2);
+  assert.equal(bridge.voiceSentSessions.size, 0);
+  assert.equal(chats.length, 2);
+});
+
 test('chat scope uses the live Agent id, with existing identity fallbacks and display name fallback', async t => {
   const { bridge, ctx } = fixture(t);
   const a = await bridge.ensureAgent(contactA);
@@ -557,7 +653,7 @@ test('bridge presets hide enumeration, search and global bridge control while wo
   const work = fixture(t, { toolAllowlist });
   const workHandle = (await work.bridge.ensureAgent(contactA)).handle;
   for (const name of denied) assert.equal(typeof workHandle.guard({ name }), 'string');
-  for (const name of ['wechat_recent_messages', 'wechat_send_image', 'workspace_read', 'workspace_run', 'web_search', 'todo_write']) {
+  for (const name of ['wechat_recent_messages', 'wechat_send_image', 'wechat_send_voice', 'workspace_read', 'workspace_run', 'web_search', 'todo_write']) {
     assert.equal(workHandle.guard({ name }), undefined);
   }
 });

@@ -8,6 +8,7 @@ DeepSeek Harness（DSH）的微信桥接插件：通过 [wechat-ai](https://gith
 - 每个微信会话对应一个 DSH Session，可在 Web UI 侧边栏查看。
 - 默认按联系人和群隔离工作区，首次需要 Agent 时才创建；也可切换为共享工作区。
 - 接收文本、图片、引用消息和文件；引用图片会作为附件转发。
+- Agent 可以把工作区里的音频文件作为微信原生语音条发送；仅在发送人明确要求或回复确实更适合语音时使用。
 - Agent 的文件/命令工具限定在专用工作区（bubblewrap，不挂载宿主机目录）。
 - 可选 Codex CLI 子代理，运行在同一个工作区 jail 内。
 - Web UI「设置 → 微信桥接」配置页，支持分组表单和保存。
@@ -70,6 +71,12 @@ git clone https://github.com/Windfarer/dsh-wechat-ai-bridge.git
 
 升级到 0.2.0 后，未指定模式的配置默认使用 `per-chat`。启动时检查已保存会话的工作目录；切换模式或根目录后，只清除不匹配的会话关联，下次触发创建新会话。旧会话历史和旧工作区文件不会自动移动或删除。原来的通用默认路径保留为逐聊天模式的根目录；建议在部署配置中指定一个新的根目录，使旧共享数据与新目录更清晰地分开。需要原有行为时显式配置 `workspaceMode: shared`，并保留原 `workspacePath`。
 
+## 语音发送
+
+从 0.3.0 起，工作模式提供 `wechat_send_voice(recipient_name, file_path)`：它从当前聊天的工作区读取音频文件，以 base64 交给 wechat-ai 的 `send_voice_msg`，最终由微信麦克风 RPA 发送原生语音条。音频支持 WAV/MP3/M4A/OGG/FLAC 等（wechat-ai 用 FFmpeg 解码），时长 1–55 秒、最大 10 MiB；播放按真实时长等待，默认等待 60 秒。
+
+是否使用语音由 Agent 按系统提示判断：只有发送人明确要求“发语音/用语音回复”，或这条回复确实更适合语音时才调用；其他情况继续走普通文字回复。语音动作被接受后（包括已排队或等待超时、仍由 RPA 继续播放的情况）桥接会跳过本轮的文字自动回复，避免语音和文字重复；明确失败或被拒绝时仍回退到正常文字路径。当前插件不内置 TTS，需要先把音频文件放进工作区（例如用 `workspace_run` 调用 `espeak-ng` 等本机 TTS 生成 WAV）再发送。
+
 ## 设置页
 
 安装后打开 **设置 → 微信桥接**，在基础设置中选择工作区模式。也可编辑 MCP 地址、token 文件、token 环境变量，以及模型、自动回复、图片/文件、工具与 Codex 配置；工作区根目录/状态/日志路径只读展示，token 本身不会返回浏览器。保存会通过 `configEditor` 写回 profile patch 并重载插件。
@@ -77,9 +84,9 @@ git clone https://github.com/Windfarer/dsh-wechat-ai-bridge.git
 ## 安全与注意事项
 
 - 群成员 @ 机器人即可驱动工作区内的 Agent；可用 `reply.allowContacts` / `denyContacts` 限制触发者。
-- 逐聊天模式下，文件工具、命令沙箱和图片发送均限定在当前聊天的工作区。`wechat_send_image` 依据当前 Agent 的会话关联确定根目录；没有活跃桥接聊天上下文的调用会被拒绝，不会回退到包含所有聊天的根目录。共享模式保留从共享工作区发送图片的行为。
-- 从 0.2.2 起，桥接 Agent 的微信工具严格绑定到当前私聊或群聊：`wechat_recent_messages` 和 `wechat_send_image` 只接受当前会话的 username 或显示名，实际 API 调用统一使用绑定的 username，不能跨会话读取消息或发送图片。范围由调用方 Agent 的身份与活跃会话关联确定，拒绝错误不包含 token 或其他聊天资料。
-- 桥接 Agent 禁止调用 `wechat_list_chats` 和 `wechat_search_contacts`。聊天模式只保留当前会话消息读取工具；工作模式的白名单保留当前会话消息读取、图片发送和原有非微信工具，移除会话枚举、联系人搜索及全局桥接状态/控制工具。没有活跃桥接会话范围的普通 DSH 调用保留原有行为，图片发送仍遵守上述工作区限制。
+- 逐聊天模式下，文件工具、命令沙箱、图片发送和语音发送均限定在当前聊天的工作区。`wechat_send_image` / `wechat_send_voice` 依据当前 Agent 的会话关联确定根目录；没有活跃桥接聊天上下文的调用会被拒绝，不会回退到包含所有聊天的根目录。共享模式保留从共享工作区发送图片和语音的行为。
+- 从 0.2.2 起，桥接 Agent 的微信工具严格绑定到当前私聊或群聊：`wechat_recent_messages`、`wechat_send_image` 和 `wechat_send_voice` 只接受当前会话的 username 或显示名，实际 API 调用统一使用绑定的 username，不能跨会话读取消息、发送图片或语音。范围由调用方 Agent 的身份与活跃会话关联确定，拒绝错误不包含 token 或其他聊天资料。
+- 桥接 Agent 禁止调用 `wechat_list_chats` 和 `wechat_search_contacts`。聊天模式只保留当前会话消息读取工具；工作模式的白名单保留当前会话消息读取、图片/语音发送和原有非微信工具，移除会话枚举、联系人搜索及全局桥接状态/控制工具。没有活跃桥接会话范围的普通 DSH 调用保留原有行为，图片/语音发送仍遵守上述工作区限制。
 - 自定义 Agent 预设应继续避免启用宿主机全局文件、终端等工具；微信会话范围校验不会放宽文件与命令的工作区隔离。
 - 启用 Codex 会在聊天首次使用工作区时复制认证，每次运行前刷新各自的认证副本；工作区内代码可读取该凭据，建议使用单独账号。文件隔离不等于 Codex 账号隔离。
 - 插件不硬编码任何账号、wxid 或 token；自己的 wxid 从 wechat-ai 的 `database.data_dir` 动态解析。
