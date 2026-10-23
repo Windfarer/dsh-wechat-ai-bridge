@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -539,6 +540,51 @@ test('a voice send cancels the pending working notice', async t => {
   assert.equal(fired, false);
 });
 
+test('TTS text voice tool synthesizes and sends a scoped voice reply', async t => {
+  let received;
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      received = { url: req.url, authorization: req.headers.authorization, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) };
+      res.writeHead(200, { 'content-type': 'audio/mpeg' });
+      res.end(Buffer.from('ID3tts-fixture'));
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const { bridge, ctx } = fixture(t, {
+    tts: { enabled: true, baseUrl: `${base}/v1`, apiKey: 'unused', model: 'breeze-tts-2', voice: 'alloy', maxChars: 80 },
+  });
+  const a = await bridge.ensureAgent(contactA);
+  const tools = new Map();
+  const sent = [];
+  ctx.tools = { register: tool => tools.set(tool.name, tool) };
+  registerTools(ctx, bridge, {
+    async sendVoice(args) { sent.push(args); return { status: 'executed', completed: true, audio: { duration_seconds: 2 } }; },
+  });
+  const send = text => tools.get('wechat_send_voice_text').execute({ text });
+  await assert.rejects(send('你好'), /active WeChat bridge chat/);
+  ctx.agents.currentInitiator = () => ({ id: a.sessionId });
+  const timer = setTimeout(() => {}, 20);
+  bridge.workingNoticeTimers.set(a.sessionId, timer);
+  const result = await send('你好，我是 Nemu。');
+  assert.equal(received.url, '/v1/audio/speech');
+  assert.equal(received.authorization, 'Bearer unused');
+  assert.deepEqual(received.body, { model: 'breeze-tts-2', input: '你好，我是 Nemu。', voice: 'alloy' });
+  assert.equal(Buffer.from(sent[0].audio_base64, 'base64').toString(), 'ID3tts-fixture');
+  assert.equal(sent[0].recipient_name, contactA.username);
+  assert.equal(result.recipient, contactA.username);
+  assert.equal(result.completed, true);
+  assert.equal(bridge.workingNoticeTimers.has(a.sessionId), false);
+  assert.equal(bridge.voiceSentSessions.has(a.sessionId), true);
+  await assert.rejects(send('x'.repeat(81)), /exceeds 80 characters/);
+});
+
 test('a completed voice bubble suppresses the automatic text reply for that turn', async t => {
   const { bridge, ctx, chats, sent, drain } = pollingFixture(t);
   const create = ctx.agents.create;
@@ -680,7 +726,7 @@ test('bridge presets hide enumeration, search and global bridge control while wo
   const work = fixture(t, { toolAllowlist });
   const workHandle = (await work.bridge.ensureAgent(contactA)).handle;
   for (const name of denied) assert.equal(typeof workHandle.guard({ name }), 'string');
-  for (const name of ['wechat_recent_messages', 'wechat_send_image', 'wechat_send_voice', 'workspace_read', 'workspace_run', 'web_search', 'todo_write']) {
+  for (const name of ['wechat_recent_messages', 'wechat_send_image', 'wechat_voice_intent', 'wechat_send_voice_text', 'wechat_send_voice', 'workspace_read', 'workspace_run', 'web_search', 'todo_write']) {
     assert.equal(workHandle.guard({ name }), undefined);
   }
 });
@@ -759,8 +805,17 @@ test('settings expose the mode without credentials and reject invalid enum value
   const read = await request('GET');
   assert.equal(read.result.values.workspaceMode, 'per-chat');
   assert.equal(Object.hasOwn(read.result.values, 'token'), false);
+  assert.equal(read.result.values.tts.apiKey, '');
+  assert.equal(read.result.values.tts.enabled, false);
+  bridge.config.tts.apiKey = 'configured-secret';
+  assert.equal((await request('GET')).result.values.tts.apiKey, '');
   assert.equal((await request('POST', { workspaceMode: 'shared' })).code, 200);
   assert.equal(edited.workspaceMode, 'shared');
   assert.equal((await request('POST', { workspaceMode: 'invalid' })).code, 400);
   assert.equal(edited.workspaceMode, 'shared');
+  const tts = { enabled: true, baseUrl: 'http://127.0.0.1:8000/v1', apiKey: '', model: 'breeze-tts-2', voice: 'alloy', timeoutMs: 60000, maxChars: 200 };
+  assert.equal((await request('POST', { tts })).code, 200);
+  assert.equal(edited.tts.baseUrl, tts.baseUrl);
+  assert.equal(edited.tts.enabled, true);
+  assert.equal(Object.hasOwn(edited.tts, 'apiKey'), false);
 });
