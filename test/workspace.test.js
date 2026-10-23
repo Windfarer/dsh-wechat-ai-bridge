@@ -7,7 +7,7 @@ import { Readable } from 'node:stream';
 import test from 'node:test';
 import { Bridge } from '../lib/bridge.js';
 import { emptyState } from '../lib/state.js';
-import { chatWorkspaceSegment, normalizeConfig } from '../lib/util.js';
+import { chatWorkspaceSegment, isVoiceRequest, normalizeConfig } from '../lib/util.js';
 import { registerTools } from '../lib/tools.js';
 import { registerSettingsRoute } from '../lib/settings-api.js';
 
@@ -498,6 +498,33 @@ test('a queued local voice action also suppresses the automatic text reply', asy
   });
   assert.equal(sent.length, 1);
   assert.equal(bridge.voiceSentSessions.has(a.sessionId), true);
+});
+
+test('explicit voice requests are detected without matching negations', () => {
+  for (const text of ['给我发一条语音打招呼', '再发一条语音打招呼', '用语音回复我', '发个语音', '语音回复一下', 'send a voice message', 'reply by voice', '不要文字，发语音']) {
+    assert.equal(isVoiceRequest(text), true, text);
+  }
+  for (const text of ['不要发语音', '别用语音回复我', '语音识别真好用', '今天天气不错', '']) {
+    assert.equal(isVoiceRequest(text), false, text);
+  }
+});
+
+test('declaring a voice reply cancels the pending working notice', async t => {
+  const { bridge, ctx } = fixture(t);
+  const a = await bridge.ensureAgent(contactA);
+  let fired = false;
+  const timer = setTimeout(() => { fired = true; }, 20);
+  bridge.workingNoticeTimers.set(a.sessionId, timer);
+  const tools = new Map();
+  ctx.tools = { register: tool => tools.set(tool.name, tool) };
+  registerTools(ctx, bridge, {});
+  ctx.agents.currentInitiator = () => ({ id: a.sessionId });
+  const result = await tools.get('wechat_voice_intent').execute({});
+  assert.deepEqual(result, { status: 'ok', voice_reply: true });
+  assert.equal(bridge.voiceIntentSessions.has(a.sessionId), true);
+  assert.equal(bridge.workingNoticeTimers.has(a.sessionId), false);
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(fired, false);
 });
 
 test('a voice send cancels the pending working notice', async t => {

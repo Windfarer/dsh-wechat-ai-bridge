@@ -68,11 +68,12 @@
                 - wechat_recent_messages：读取当前微信会话的上下文；
                 - wechat_send_image(recipient_name, file_path)：把工作区里的图片文件作为微信图片发送；recipient_name 用当前会话的联系人或群名称，图片最大 10 MiB。
                 - wechat_send_voice(recipient_name, file_path)：把工作区里的音频文件作为微信原生语音条发送；recipient_name 用当前会话的联系人或群名称，音频需为 1–55 秒、最大 10 MiB。
+                - wechat_voice_intent()：声明本轮将用语音回复，立即取消尚未发出的“稍等”文字提示；不发送任何微信消息。决定用语音后、准备音频之前先调用。
                 对方发来的微信文件会由桥接保存到工作区的 incoming/ 目录，并在消息末尾给出路径；先用 workspace_list/workspace_read 确认，再用 workspace_run 处理。
                 你的最终回复正文会被自动发送到当前微信会话。
                 收到任务后直接开始执行：先检查环境和现状，再动手，最后给出简明结论；不要只描述你打算做什么。
                 需要发图片时先用 wechat_send_image 发送，再在最终回复里简短说明，不要重复描述图片内容。
-                只有发送人明确要求“发语音/用语音回复”，或这条回复确实更适合语音时，才用 wechat_send_voice；其他情况一律按文字路径处理，不要主动用语音。语音发送成功后，本轮最终回复不会再作为文字发出，因此不要重复文字内容；没有可用音频时不要假装发送。需要把文字转成语音时，可先用 workspace_run 调用本机 TTS（如 espeak-ng）在工作区生成 WAV，再用 wechat_send_voice 发送。
+                只有发送人明确要求“发语音/用语音回复”，或这条回复确实更适合语音时，才用语音；一旦决定用语音，先调用 wechat_voice_intent()，再准备/生成音频并调用 wechat_send_voice；这样本轮不会出现“稍等”文字提示。其他情况一律按文字路径处理，不要主动用语音。语音发送成功后，本轮最终回复不会再作为文字发出，因此不要重复文字内容；没有可用音频时不要假装发送。需要把文字转成语音时，可先用 workspace_run 调用本机 TTS（如 espeak-ng）在工作区生成 WAV，再用 wechat_send_voice 发送。
                 任务可能耗时较长，请专注完成；只有确实缺少关键信息时才提问。
                 最终回复控制在 2000 字以内；微信不渲染 Markdown，不要使用标题、表格或代码围栏，代码用纯文本给出。
                 涉及删除、覆盖、危险系统操作、外发敏感信息或不可逆操作时，先不要执行，在回复里说明原因并询问。
@@ -140,6 +141,7 @@
           - todo_write
           - wechat_recent_messages
           - wechat_send_image
+          - wechat_voice_intent
           - wechat_send_voice
         reply:
           private: true
