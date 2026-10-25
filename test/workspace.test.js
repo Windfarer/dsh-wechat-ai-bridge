@@ -585,6 +585,32 @@ test('TTS text voice tool synthesizes and sends a scoped voice reply', async t =
   await assert.rejects(send('x'.repeat(81)), /exceeds 80 characters/);
 });
 
+test('a voice message is held until its transcript is available', async t => {
+  const { bridge, chats, prompts, sent, drain } = pollingFixture(t);
+  const voice = {
+    ...chats[1].last_message, type: 34, type_name: '语音',
+    text: '【语音】', voice_to_text: '',
+  };
+  chats[1].last_message = voice;
+  bridge.api.recentChats = async () => ({ chats: [chats[1]] });
+  bridge.api.recentMessages = async () => ({ messages: [voice] });
+  await bridge.tick();
+  assert.equal(bridge.state.chats[contactA.username].lastTime, 0);
+  assert.equal(bridge.chats.get(contactA.username), undefined);
+  assert.equal(bridge.state.stats.triggers, 0);
+
+  const transcribed = { ...voice, text: '【语音】现在能听到吗', voice_to_text: '现在能听到吗' };
+  chats[1].last_message = transcribed;
+  bridge.api.recentMessages = async () => ({ messages: [transcribed] });
+  await bridge.tick();
+  assert.equal(bridge.state.chats[contactA.username].lastTime, 100);
+  assert.equal(bridge.chats.get(contactA.username).pending.length, 1);
+  await drain();
+  assert.equal(prompts.length, 1);
+  assert.ok(prompts[0].includes('【语音转文字】现在能听到吗'));
+  assert.equal(sent.length, 1);
+});
+
 test('a recent-chat timestamp ahead of the message list does not skip a voice message', async t => {
   const { bridge, chats, prompts, sent, drain } = pollingFixture(t);
   const voice = {
