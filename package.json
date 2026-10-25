@@ -1,6 +1,6 @@
 {
   "name": "dsh-wechat-ai-bridge",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "DeepSeek Harness ↔ WeChat bridge for the wechat-ai MCP server",
   "type": "module",
   "main": "./index.js",

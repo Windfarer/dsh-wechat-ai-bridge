@@ -93,6 +93,26 @@ test('group voice mention matching uses the transcript', () => {
   assert.equal(bridge.mentioned(group, voice), false);
 });
 
+test('quoting a message that mentions the bot is not a mention by the sender', () => {
+  const { bridge } = fixture();
+  bridge.identityNames.add('Nemu');
+  // wechat-ai appends the quoted message, and the quote here contains @Nemu.
+  const quoted = item({
+    type: 49, type_name: '引用消息',
+    text: '这位师傅，你在末世里发财有什么用\n引用：Aqua: @Nemu 那末世干啥能发财',
+  }).message;
+  assert.equal(bridge.mentioned(group, quoted), false);
+  // The sender's own comment still triggers when it mentions the bot directly.
+  const direct = item({
+    type: 49, type_name: '引用消息',
+    text: '@Nemu 你说的这个不太对\n引用：Aqua: 别的消息',
+  }).message;
+  assert.equal(bridge.mentioned(group, direct), true);
+  // A plain text message containing the literal marker is still matched as written.
+  const plain = item({ text: '标题\n引用：这条是正文 @Nemu' }).message;
+  assert.equal(bridge.mentioned(group, plain), true);
+});
+
 test('persona is prepended only when configured', () => {
   const batch = [item()];
   assert.ok(!formatPrompt(group, batch, '', 4000).includes('［角色设定］'));
