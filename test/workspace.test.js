@@ -923,3 +923,19 @@ test('settings expose the mode without credentials and reject invalid enum value
   assert.equal(edited.tts.enabled, true);
   assert.equal(Object.hasOwn(edited.tts, 'apiKey'), false);
 });
+
+test('missing tools in an explicit allowlist are reported at startup', () => {
+  const warnings = [];
+  const log = { ...logger, warn: message => warnings.push(String(message)) };
+  const make = options => new Bridge({}, normalizeConfig({
+    workspacePath: '/tmp/wx-allowlist-root', statePath: '/tmp/wx-allowlist-state.json',
+    logPath: '/tmp/wx-allowlist-log', model: { provider: 'test', model: 'test' }, ...options,
+  }), { data: emptyState(), save() {} }, { client: {} }, log);
+  const bridge = make({ toolAllowlist: ['wechat_send_image'] });
+  assert.deepEqual(bridge.checkToolAllowlist(['wechat_send_image', 'wechat_send_file']), ['wechat_send_file']);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /wechat_send_file/);
+  const unlisted = make({});
+  assert.deepEqual(unlisted.checkToolAllowlist(['wechat_send_file']), []);
+  assert.equal(warnings.length, 1);
+});

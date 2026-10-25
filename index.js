@@ -3,7 +3,7 @@ import { McpClient } from './lib/mcp-client.js';
 import { WechatApi } from './lib/wechat-api.js';
 import { StateStore } from './lib/state.js';
 import { Bridge } from './lib/bridge.js';
-import { registerTools } from './lib/tools.js';
+import { registerTools, WECHAT_AGENT_TOOLS } from './lib/tools.js';
 import { registerSettingsRoute } from './lib/settings-api.js';
 
 export const name = 'wechat-ai-bridge';
@@ -34,6 +34,7 @@ export function apply(ctx, input = {}) {
       const off = ctx.on('session/event', (session, event) => bridge.onSessionEvent(session, event));
       if (typeof off === 'function') disposers.push(off);
       registerTools(ctx, bridge, bridge.api, disposers);
+      bridge.checkToolAllowlist(WECHAT_AGENT_TOOLS);
       bridge.start();
       return async () => {
         // Remove entry points synchronously before draining asynchronous work.

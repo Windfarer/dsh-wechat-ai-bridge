@@ -143,6 +143,8 @@ tts:
 
 文件 RPA 真正点击“发送”后，以 wechat-ai 返回的 `completed` 为准；排队/超时仍可能在稍后完成，不要自动重发。wechat-ai 的发送校验依赖消息库里的文件 md5；若返回 `status: failed` 但 `send_attempted` 和 `completed` 为 `true`，说明已尝试发送但校验未确认，文件可能已经到达，不要自动重发。
 
+> 升级提示：profile 里的配置会整体覆盖插件默认值。如果你在 0.7.0 之前保存过设置（配置里显式写了 `toolAllowlist`），升级后需要把 `wechat_send_file` 补进白名单，否则桥接 Agent 看不到这个工具；插件启动时会在日志中警告白名单遗漏的微信工具。全新安装或删除 `toolAllowlist` 后由插件默认值接管，无需手动处理。
+
 ## 设置页
 
 从 0.5.0 起，设置页新增“人设”分组，TTS 分组新增可选的 `instructions` 字段。安装后打开 **设置 → 微信桥接**，在基础设置中选择工作区模式，在“人设”中填写可选的角色设定。也可编辑 MCP 地址、token 文件、token 环境变量，以及模型、TTS、自动回复、图片/文件、工具与 Codex 配置；工作区根目录/状态/日志路径只读展示，token 和 TTS API Key 本身不会返回浏览器。保存会通过 `configEditor` 写回 profile patch 并重载插件。
