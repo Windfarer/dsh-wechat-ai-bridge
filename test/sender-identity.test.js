@@ -66,6 +66,33 @@ test('missing metadata stays unknown, without using display names as global nick
   assert.ok(displayed.includes('发送者群昵称：测试群昵称'));
 });
 
+test('voice prompts use the transcription and fall back to the legacy text suffix', () => {
+  const transcribed = formatPrompt(privateChat, [item({
+    type: 34, type_name: '语音', text: '【语音】旧字段不应优先', voice_to_text: '今天天气怎么样',
+  })], '', 4000);
+  assert.ok(transcribed.includes('内容：\n【语音转文字】今天天气怎么样'));
+  assert.ok(!transcribed.includes('旧字段不应优先'));
+  const legacy = formatPrompt(privateChat, [item({
+    type: 34, type_name: '语音', text: '【语音】旧版转写文本', voice_to_text: '',
+  })], '', 4000);
+  assert.ok(legacy.includes('【语音转文字】旧版转写文本'));
+  const empty = formatPrompt(privateChat, [item({
+    type: 34, type_name: '语音', text: '【语音】', voice_to_text: '',
+  })], '', 4000);
+  assert.ok(empty.includes('【语音】（未获取到转写文字）'));
+});
+
+test('group voice mention matching uses the transcript', () => {
+  const { bridge } = fixture();
+  bridge.identityNames.add('Nemu');
+  const voice = item({
+    type: 34, type_name: '语音', text: '【语音】@Nemu 在吗', voice_to_text: '@Nemu 在吗',
+  }).message;
+  assert.equal(bridge.mentioned(group, voice), true);
+  voice.voice_to_text = '在吗';
+  assert.equal(bridge.mentioned(group, voice), false);
+});
+
 test('persona is prepended only when configured', () => {
   const batch = [item()];
   assert.ok(!formatPrompt(group, batch, '', 4000).includes('［角色设定］'));

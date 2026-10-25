@@ -585,6 +585,43 @@ test('TTS text voice tool synthesizes and sends a scoped voice reply', async t =
   await assert.rejects(send('x'.repeat(81)), /exceeds 80 characters/);
 });
 
+test('voice messages with a transcript are replied to as text', async t => {
+  const { bridge, chats, prompts, sent, drain } = pollingFixture(t);
+  const voice = {
+    ...chats[1].last_message, type: 34, type_name: '语音',
+    text: '【语音】帮我查一下明天的天气', voice_to_text: '帮我查一下明天的天气',
+  };
+  chats[1].last_message = voice;
+  bridge.api.recentChats = async () => ({ chats: [chats[1]] });
+  bridge.api.recentMessages = async () => ({ messages: [voice] });
+  await bridge.tick();
+  const pending = bridge.chats.get(contactA.username).pending;
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].message.voice_to_text, voice.voice_to_text);
+  await drain();
+  assert.equal(prompts.length, 1);
+  assert.ok(prompts[0].includes('【语音转文字】帮我查一下明天的天气'));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].recipient_name, contactA.username);
+});
+
+test('voice messages without a transcript are skipped', async t => {
+  const { bridge, chats, prompts, sent, drain } = pollingFixture(t);
+  const voice = {
+    ...chats[1].last_message, type: 34, type_name: '语音',
+    text: '【语音】', voice_to_text: '',
+  };
+  chats[1].last_message = voice;
+  bridge.api.recentChats = async () => ({ chats: [chats[1]] });
+  bridge.api.recentMessages = async () => ({ messages: [voice] });
+  await bridge.tick();
+  assert.equal(bridge.chats.get(contactA.username), undefined);
+  await drain();
+  assert.equal(prompts.length, 0);
+  assert.equal(sent.length, 0);
+  assert.equal(bridge.state.stats.triggers, 0);
+});
+
 test('a completed voice bubble suppresses the automatic text reply for that turn', async t => {
   const { bridge, ctx, chats, sent, drain } = pollingFixture(t);
   const create = ctx.agents.create;
