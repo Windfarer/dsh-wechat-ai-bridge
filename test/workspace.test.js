@@ -442,6 +442,46 @@ test('global image send rejects missing context, other chats, traversal and syml
   assert.equal(sent.length, 1);
 });
 
+test('global file send is chat-scoped, workspace-bound and re-sends incoming files', async t => {
+  const { bridge, ctx } = fixture(t);
+  const a = await bridge.ensureAgent(contactA);
+  const b = await bridge.ensureAgent(contactB);
+  fs.writeFileSync(path.join(a.workspaceDir, 'report.txt'), 'own file fixture');
+  fs.writeFileSync(path.join(b.workspaceDir, 'report.txt'), 'other file fixture');
+  fs.writeFileSync(path.join(a.workspaceDir, 'empty.txt'), '');
+  fs.mkdirSync(path.join(a.workspaceDir, 'folder.txt'));
+  const tools = new Map();
+  const sent = [];
+  ctx.tools = { register: tool => tools.set(tool.name, tool) };
+  registerTools(ctx, bridge, {
+    async sendFile(args) {
+      sent.push(args);
+      return { status: 'executed', completed: true, file: { bytes: 17, file_name: args.file_name } };
+    },
+  });
+  const send = (file_path, extra = {}) => tools.get('wechat_send_file')
+    .execute({ recipient_name: contactA.display_name, file_path, ...extra });
+  await assert.rejects(send('report.txt'), /active WeChat bridge chat/);
+  ctx.agents.currentInitiator = () => ({ id: a.sessionId });
+  assert.equal(await bridge.fileWorkspaceRoot(), a.workspaceDir);
+  const result = await send('/workspace/report.txt');
+  assert.equal(Buffer.from(sent[0].file_base64, 'base64').toString(), 'own file fixture');
+  assert.equal(sent[0].file_name, 'report.txt');
+  assert.equal(result.recipient, contactA.username);
+  assert.equal(result.completed, true);
+  await send('report.txt', { file_name: '成绩单.txt', wait_seconds: 5 });
+  assert.equal(sent[1].file_name, '成绩单.txt');
+  assert.equal(sent[1].wait_seconds, 5);
+  await assert.rejects(send(path.join(b.workspaceDir, 'report.txt')), /escapes/);
+  await assert.rejects(send(`../${path.basename(b.workspaceDir)}/report.txt`), /escapes/);
+  fs.symlinkSync(path.join(b.workspaceDir, 'report.txt'), path.join(a.workspaceDir, 'alias.txt'));
+  await assert.rejects(send('alias.txt'), /symlink/);
+  await assert.rejects(send('folder.txt'), /not a regular file/);
+  await assert.rejects(send('empty.txt'), /file is empty/);
+  await assert.rejects(send('report.txt', { file_name: 'nested/name.txt' }), /plain file name/);
+  assert.equal(sent.length, 2);
+});
+
 test('global voice send is chat-scoped, workspace-bound and marks a completed voice turn', async t => {
   const { bridge, ctx } = fixture(t);
   const a = await bridge.ensureAgent(contactA);
@@ -786,7 +826,7 @@ test('bridge presets hide enumeration, search and global bridge control while wo
   const work = fixture(t, { toolAllowlist });
   const workHandle = (await work.bridge.ensureAgent(contactA)).handle;
   for (const name of denied) assert.equal(typeof workHandle.guard({ name }), 'string');
-  for (const name of ['wechat_recent_messages', 'wechat_send_image', 'wechat_voice_intent', 'wechat_send_voice_text', 'wechat_send_voice', 'workspace_read', 'workspace_run', 'web_search', 'todo_write']) {
+  for (const name of ['wechat_recent_messages', 'wechat_send_image', 'wechat_send_file', 'wechat_voice_intent', 'wechat_send_voice_text', 'wechat_send_voice', 'workspace_read', 'workspace_run', 'web_search', 'todo_write']) {
     assert.equal(workHandle.guard({ name }), undefined);
   }
 });
