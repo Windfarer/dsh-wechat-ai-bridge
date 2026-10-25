@@ -397,7 +397,7 @@ test('rehome clears only incompatible mappings and leaves old files and sessions
   assert.equal(store.data.chats[contactA.username], a);
 });
 
-test('a chat session archived outside the bridge is restored before it can go silent', async t => {
+test('a chat whose session was archived starts a new session instead of going silent', async t => {
   const { bridge, ctx, snapshots, config } = fixture(t);
   const matching = bridge.workspacePathForChat(contactB.username);
   fs.mkdirSync(matching, { recursive: true });
@@ -405,16 +405,28 @@ test('a chat session archived outside the bridge is restored before it can go si
   b.sessionId = 'archived-session';
   snapshots.set(b.sessionId, { header: { cwd: matching, agentPreset: config.agentPreset } });
   ctx.workspaceRegistry.archivedSessionIds.push(b.sessionId);
+  // Startup retires the mapping, and the archived session stays archived: that
+  // is the user's own intent, and DSH rejects every turn for it.
   await bridge.rehomeStoredSessions();
-  assert.equal(b.sessionId, 'archived-session');
-  assert.deepEqual(ctx.workspaceRegistry.archivedSessionIds, []);
+  assert.equal(b.sessionId, '');
+  assert.deepEqual(ctx.workspaceRegistry.archivedSessionIds, ['archived-session']);
   // Archiving again after startup — the GUI can do this mid-run — must not
   // leave every following turn rejected by the DSH pre-step gate.
-  ctx.workspaceRegistry.archivedSessionIds.push(b.sessionId);
+  snapshots.set('archived-mid-run', { header: { cwd: matching, agentPreset: config.agentPreset } });
+  b.sessionId = 'archived-mid-run';
+  ctx.workspaceRegistry.archivedSessionIds.push('archived-mid-run');
   const entry = await bridge.ensureAgent(contactB);
-  assert.equal(entry.sessionId, b.sessionId);
-  assert.deepEqual(ctx.workspaceRegistry.archivedSessionIds, []);
-  await bridge.disposeEntry(contactB.username, entry);
+  assert.notEqual(entry.sessionId, 'archived-mid-run');
+  assert.notEqual(entry.sessionId, 'archived-session');
+  assert.equal(b.sessionId, entry.sessionId);
+  assert.deepEqual(ctx.workspaceRegistry.archivedSessionIds, ['archived-session', 'archived-mid-run']);
+  // A cached live agent is retired too: archiving its session from the GUI must
+  // not leave the chat answering from a snapshot DSH now refuses to run.
+  ctx.workspaceRegistry.archivedSessionIds.push(entry.sessionId);
+  const replaced = await bridge.ensureAgent(contactB);
+  assert.notEqual(replaced.sessionId, entry.sessionId);
+  assert.equal(b.sessionId, replaced.sessionId);
+  await bridge.disposeEntry(contactB.username, replaced);
 });
 
 test('agents create and resume in their chat workspace with scoped file tools', async t => {
