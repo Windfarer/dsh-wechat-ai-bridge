@@ -31,8 +31,15 @@ function fixture(t, options = {}) {
   const snapshots = new Map();
   const created = [];
   const ctx = {
-    get: name => name === 'sessionPersistence' ? { stat: async id => snapshots.get(id) } : undefined,
+    get: name => name === 'sessionPersistence' ? { stat: async id => snapshots.get(id) }
+      : name === 'workspaceRegistry' ? ctx.workspaceRegistry : undefined,
     workspaceRegistry: {
+      archivedSessionIds: [],
+      async unarchiveSession(id) {
+        const at = this.archivedSessionIds.indexOf(id);
+        if (at === -1) throw new Error(`session '${id}' is not archived`);
+        this.archivedSessionIds.splice(at, 1);
+      },
       resolveByPath: async dir => registered.get(dir),
       async create(dir, title) {
         const entity = { dir, title, sessions: [], async attachSession(id) { this.sessions.push(id); } };
@@ -388,6 +395,26 @@ test('rehome clears only incompatible mappings and leaves old files and sessions
   assert.equal(fs.existsSync(bridge.workspacePathForChat(contactA.username)), false);
   assert.equal(created.length, 0);
   assert.equal(store.data.chats[contactA.username], a);
+});
+
+test('a chat session archived outside the bridge is restored before it can go silent', async t => {
+  const { bridge, ctx, snapshots, config } = fixture(t);
+  const matching = bridge.workspacePathForChat(contactB.username);
+  fs.mkdirSync(matching, { recursive: true });
+  const b = bridge.chatState(contactB);
+  b.sessionId = 'archived-session';
+  snapshots.set(b.sessionId, { header: { cwd: matching, agentPreset: config.agentPreset } });
+  ctx.workspaceRegistry.archivedSessionIds.push(b.sessionId);
+  await bridge.rehomeStoredSessions();
+  assert.equal(b.sessionId, 'archived-session');
+  assert.deepEqual(ctx.workspaceRegistry.archivedSessionIds, []);
+  // Archiving again after startup — the GUI can do this mid-run — must not
+  // leave every following turn rejected by the DSH pre-step gate.
+  ctx.workspaceRegistry.archivedSessionIds.push(b.sessionId);
+  const entry = await bridge.ensureAgent(contactB);
+  assert.equal(entry.sessionId, b.sessionId);
+  assert.deepEqual(ctx.workspaceRegistry.archivedSessionIds, []);
+  await bridge.disposeEntry(contactB.username, entry);
 });
 
 test('agents create and resume in their chat workspace with scoped file tools', async t => {
