@@ -319,6 +319,49 @@ test('runBatch attaches recent images for visual group follow-ups and preserves 
   });
 });
 
+test('a burst of media can hide the newest picture from the media window; the message feed recovers it', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const data = Buffer.from('newest image pixels');
+  const image = item({
+    type: 3, local_id: 'new-image', create_time: now - 1, text: '',
+    image_block: { data: data.toString('base64'), mimeType: 'image/png' },
+  }).message;
+  const prompts = [];
+  const saved = [];
+  let fallbackReads = 0;
+  const { bridge, store, logs } = fixture({
+    async searchContacts() { return { contacts: [profile] }; },
+    // Older voice messages fill the window; the picture itself is not in it.
+    async recentMedia() {
+      return { messages: [item({ type: 34, local_id: 'old-voice', create_time: now - 3, text: '【语音】' }).message] };
+    },
+    async recentMessagesWithMedia(username, limit) {
+      fallbackReads += 1;
+      assert.equal(username, group.username);
+      assert.ok(limit >= 30);
+      return { messages: [image] };
+    },
+    async sendText() { return { status: 'executed', completed: true }; },
+  });
+  bridge.identityResolved = true;
+  bridge.rememberImage(group, image);
+  bridge.ctx.attachments = { async saveImages(images) {
+    saved.push(...images);
+    return images.map(() => 'test-image-attachment');
+  } };
+  bridge.ensureAgent = async () => ({ sessionId: 'test-session', acceptsImages: true, handle: { agent: {
+    followup({ content }) { prompts.push(content); },
+    async whenIdle() { bridge.lastAssistantText.set('test-session', '测试回复'); },
+  } } });
+  await bridge.runBatch(group, [item({ type: 3, create_time: now, text: '' }, true)], bridge.pauseGeneration);
+  assert.equal(store.data.stats.errors, 0);
+  assert.deepEqual(logs, []);
+  assert.equal(fallbackReads, 1);
+  assert.equal(saved.length, 1);
+  assert.deepEqual(Buffer.from(saved[0].data), data);
+  assert.deepEqual(prompts[0].filter(block => block.type === 'image'), [{ type: 'image', attachment: 'test-image-attachment' }]);
+});
+
 test('runBatch resolves after agent readiness, continues on failure and keeps the group @ name', async t => {
   for (const fail of [false, true]) await t.test(fail ? 'failed lookup' : 'successful lookup', async () => {
     const calls = [];
