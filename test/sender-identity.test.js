@@ -400,3 +400,37 @@ test('runBatch resolves after agent readiness, continues on failure and keeps th
     assert.ok(!JSON.stringify(store.data).includes(profile.remark));
   });
 });
+
+test('a failed group @ mention is retried without the mention instead of losing the reply', async t => {
+  for (const scenario of [
+    { name: 'the failed send did not land', landed: false, sends: 2 },
+    { name: 'the failed send landed after all', landed: true, sends: 1 },
+  ]) await t.test(scenario.name, async () => {
+    const sent = [];
+    const { bridge, store } = fixture({
+      async searchContacts() { return { contacts: [profile] }; },
+      async sendText(args) {
+        sent.push(args);
+        return args.at_user_name
+          ? { status: 'failed', completed: false, error: '未找到唯一且精确匹配的 @ 候选' }
+          : { status: 'executed', completed: true };
+      },
+      async recentMessages(username, limit) {
+        assert.equal(username, group.username);
+        assert.equal(limit, 10);
+        return { messages: scenario.landed ? [{ sender_username: 'test-self', text: '测试回复' }] : [] };
+      },
+    });
+    bridge.identityResolved = true;
+    bridge.ensureAgent = async () => ({ sessionId: 'test-session', handle: { agent: {
+      followup() {},
+      async whenIdle() { bridge.lastAssistantText.set('test-session', '测试回复'); },
+    } } });
+    await bridge.runBatch(group, [item({}, true)], bridge.pauseGeneration);
+    assert.equal(sent.length, scenario.sends);
+    assert.equal(sent[0].at_user_name, '测试群昵称');
+    if (scenario.sends === 2) assert.equal(sent[1].at_user_name, undefined);
+    assert.equal(store.data.stats.replies, 1);
+    assert.equal(store.data.stats.errors, 0);
+  });
+});
